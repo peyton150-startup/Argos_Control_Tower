@@ -51,17 +51,48 @@ def test_exact_duplicate_copy_collapses_to_one_trusted_event(tmp_path: Path) -> 
 
 def test_conflicting_event_id_quarantines_every_copy(tmp_path: Path) -> None:
     conflicting_event = {**CREATED_EVENT, "quantity": 99}
+    trusted_event = {
+        **CREATED_EVENT,
+        "event_id": "evt-2",
+        "timestamp": "2026-01-02T12:00:00Z",
+    }
 
-    result = load_events(write_jsonl(tmp_path, [CREATED_EVENT, conflicting_event]))
+    result = load_events(write_jsonl(tmp_path, [CREATED_EVENT, conflicting_event, trusted_event]))
 
-    assert result.trusted_events == ()
+    assert tuple(event.event_id for event in result.trusted_events) == ("evt-2",)
     assert tuple(event.quantity for event in result.quarantined_events) == (10, 99)
-    assert result.data_health.raw_rows == 2
-    assert result.data_health.trusted_rows == 0
+    assert result.data_health.raw_rows == 3
+    assert result.data_health.trusted_rows == 1
     assert result.data_health.duplicate_event_ids == 1
     assert result.data_health.exact_duplicate_copies == 0
     assert result.data_health.conflicting_duplicate_ids == 1
     assert result.data_health.quarantined_event_ids == ("evt-1",)
+
+
+def test_factory_as_of_excludes_conflicting_far_future_duplicate(tmp_path: Path) -> None:
+    conflicting_future_copy = {
+        **CREATED_EVENT,
+        "timestamp": "2099-01-01T00:00:00Z",
+    }
+    trusted_event = {
+        **CREATED_EVENT,
+        "event_id": "evt-2",
+        "timestamp": "2026-01-02T12:00:00Z",
+    }
+
+    result = load_events(write_jsonl(tmp_path, [CREATED_EVENT, conflicting_future_copy, trusted_event]))
+
+    assert result.factory_as_of.isoformat() == "2026-01-02T12:00:00+00:00"
+
+
+def test_no_trusted_events_cannot_provide_authoritative_factory_clock(tmp_path: Path) -> None:
+    conflicting_event = {**CREATED_EVENT, "quantity": 99}
+
+    with pytest.raises(
+        ValueError,
+        match="No trusted events remain for authoritative factory clock",
+    ):
+        load_events(write_jsonl(tmp_path, [CREATED_EVENT, conflicting_event]))
 
 
 def test_repeated_load_returns_the_same_trusted_boundary(tmp_path: Path) -> None:

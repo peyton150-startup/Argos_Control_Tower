@@ -46,11 +46,13 @@ def load_events(path: Path) -> IngestionResult:
 
     events = tuple(_normalize_row(row) for row in frame.iter_rows(named=True))
     trusted, quarantined, health = _classify_duplicates(events)
+    if not trusted:
+        raise ValueError("No trusted events remain for authoritative factory clock")
     return IngestionResult(
         trusted_events=trusted,
         quarantined_events=quarantined,
         data_health=health,
-        factory_as_of=max(event.timestamp for event in events),
+        factory_as_of=max(event.timestamp for event in trusted),
         source_sha256=source_sha256,
     )
 

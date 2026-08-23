@@ -27,6 +27,10 @@ def project_factory_state(ingestion: IngestionResult) -> FactoryState:
             key=lambda event: (event.timestamp, event.ingestion_index),
         )
     )
+    _require_unique_event_ids(events)
+    _require_unique_authoritative_events(events, "job_created")
+    _require_unique_authoritative_events(events, "job_completed")
+
     creation_events: dict[str, NormalizedEvent] = {}
     for event in events:
         if event.event_type == "job_created" and event.job_id is not None:
@@ -91,3 +95,25 @@ def project_factory_state(ingestion: IngestionResult) -> FactoryState:
         jobs=MappingProxyType(projected_jobs),
         events_by_id=MappingProxyType({event.event_id: event for event in events}),
     )
+
+
+def _require_unique_event_ids(events: tuple[NormalizedEvent, ...]) -> None:
+    event_ids = {event.event_id for event in events}
+    if len(event_ids) != len(events):
+        duplicate_ids = sorted(
+            event_id for event_id in event_ids if sum(event.event_id == event_id for event in events) > 1
+        )
+        raise ValueError(f"Duplicate trusted event ID: {duplicate_ids[0]}")
+
+
+def _require_unique_authoritative_events(
+    events: tuple[NormalizedEvent, ...], event_type: str
+) -> None:
+    job_ids = [
+        event.job_id
+        for event in events
+        if event.event_type == event_type and event.job_id is not None
+    ]
+    duplicate_job_ids = sorted(job_id for job_id in set(job_ids) if job_ids.count(job_id) > 1)
+    if duplicate_job_ids:
+        raise ValueError(f"Multiple trusted {event_type} events for job {duplicate_job_ids[0]!r}")

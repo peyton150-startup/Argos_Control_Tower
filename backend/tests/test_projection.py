@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from app.domain import DataHealth, IngestionResult, NormalizedEvent
 from app.projection import project_factory_state
 
@@ -128,6 +130,91 @@ def test_unknown_job_events_do_not_synthesize_jobs() -> None:
     assert tuple(state.events_by_id) == ("unknown-block",)
 
 
+def test_duplicate_trusted_event_ids_are_rejected_before_projection_indexing() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Duplicate trusted event ID: duplicate",
+    ):
+        project_factory_state(
+            ingestion(
+                event("duplicate", "job_created", 0),
+                event("duplicate", "job_started", 1),
+            )
+        )
+
+
+def test_multiple_trusted_job_created_events_for_one_job_are_rejected() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Multiple trusted job_created events for job 'job-1'",
+    ):
+        project_factory_state(
+            ingestion(
+                event("created-1", "job_created", 0),
+                event("created-2", "job_created", 1),
+            )
+        )
+
+
+def test_multiple_trusted_job_completed_events_for_one_job_are_rejected() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Multiple trusted job_completed events for job 'job-1'",
+    ):
+        project_factory_state(
+            ingestion(
+                event("created", "job_created", 0),
+                event("completed-1", "job_completed", 1),
+                event("completed-2", "job_completed", 2),
+            )
+        )
+
+
+def test_pre_creation_event_is_evidence_but_cannot_change_lifecycle_state() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("blocked-before-create", "job_blocked", 0, metadata={"reason": "missing_tool"}),
+            event("created", "job_created", 1),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert job.is_blocked is False
+    assert job.block_event_id is None
+    assert job.timeline_event_ids == ("blocked-before-create", "created")
+    assert state.events_by_id["blocked-before-create"].event_type == "job_blocked"
+
+
+def test_post_completion_lifecycle_events_remain_evidence_without_reopening_job() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("created", "job_created", 0),
+            event("completed", "job_completed", 1),
+            event("started-after-completion", "job_started", 2),
+            event(
+                "blocked-after-completion",
+                "job_blocked",
+                3,
+                metadata={"reason": "machine_fault"},
+            ),
+            event("unblocked-after-completion", "job_unblocked", 4),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert job.completed_at == TIMESTAMP
+    assert job.started_at is None
+    assert job.is_blocked is False
+    assert job.timeline_event_ids == (
+        "created",
+        "completed",
+        "started-after-completion",
+        "blocked-after-completion",
+        "unblocked-after-completion",
+    )
+    assert state.events_by_id["blocked-after-completion"].event_type == "job_blocked"
+
+
 def test_timeline_event_ids_follow_deterministic_lifecycle_order() -> None:
     state = project_factory_state(
         ingestion(
@@ -165,8 +252,18 @@ def test_supplied_dataset_lifecycle_counts() -> None:
 
     state = project_factory_state(result)
 
+    trusted_creation_events = tuple(
+        event for event in result.trusted_events if event.event_type == "job_created"
+    )
+    trusted_completion_events = tuple(
+        event for event in result.trusted_events if event.event_type == "job_completed"
+    )
     jobs = tuple(state.jobs.values())
+    assert len(trusted_creation_events) == 312
+    assert len({event.job_id for event in trusted_creation_events}) == 312
     assert len(jobs) == 312
+    assert len(trusted_completion_events) == 281
+    assert len({event.job_id for event in trusted_completion_events}) == 281
     assert sum(job.completed_at is not None for job in jobs) == 281
     assert sum(job.completed_at is None for job in jobs) == 31
     assert sum(job.is_blocked for job in jobs) == 9
