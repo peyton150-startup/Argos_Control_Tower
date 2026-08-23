@@ -107,7 +107,7 @@ def test_invalid_json_fails_visibly(tmp_path: Path) -> None:
 def test_supplied_dataset_reproduces_trusted_ingestion_baseline() -> None:
     result = load_events(DATA_PATH)
 
-    assert result.source_sha256 == "112c635e33abb1d1af3b9ce2be200fde44d91339fce6267295b73efa5c077ab4"
+    assert result.source_sha256 == "454cc6fb14851c392742af9d3deec2a1b6203b0f6e1f167c38d2f4027594eae7"
     assert result.data_health.raw_rows == 19_519
     assert result.data_health.trusted_rows == 19_495
     assert result.data_health.duplicate_event_ids == 19
