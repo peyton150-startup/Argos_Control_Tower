@@ -4,6 +4,7 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
+from hashlib import file_digest
 from pathlib import Path
 
 import polars as pl
@@ -25,17 +26,21 @@ REQUIRED_COLUMNS = {
 
 
 def load_events(path: Path) -> IngestionResult:
-    lazy_frame = pl.scan_ndjson(path, infer_schema_length=None, ignore_errors=False)
+    source_sha256 = _source_sha256(path)
+    lazy_frame = pl.scan_ndjson(
+        path,
+        row_index_name="ingestion_index",
+        infer_schema_length=None,
+        ignore_errors=False,
+    )
     missing_columns = REQUIRED_COLUMNS.difference(lazy_frame.collect_schema().names())
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
         raise ValueError(f"Missing required event columns: {missing}")
 
-    frame = (
-        lazy_frame.with_row_index("ingestion_index")
-        .with_columns(pl.col("timestamp").str.to_datetime(strict=True, time_zone="UTC"))
-        .collect()
-    )
+    frame = lazy_frame.with_columns(
+        pl.col("timestamp").str.to_datetime(strict=True, time_zone="UTC")
+    ).collect()
     if frame.height == 0:
         raise ValueError("Event dataset is empty")
 
@@ -46,13 +51,19 @@ def load_events(path: Path) -> IngestionResult:
         quarantined_events=quarantined,
         data_health=health,
         factory_as_of=max(event.timestamp for event in events),
+        source_sha256=source_sha256,
     )
+
+
+def _source_sha256(path: Path) -> str:
+    with path.open("rb") as source:
+        return file_digest(source, "sha256").hexdigest()
 
 
 def _normalize_row(row: dict[str, object]) -> NormalizedEvent:
     metadata = row["metadata"]
     if not isinstance(metadata, dict):
-        raise ValueError(f"Event {row['event_id']!r} metadata must be an object")
+        raise TypeError(f"Event {row['event_id']!r} metadata must be an object")
 
     return NormalizedEvent.create(
         event_id=_required_string(row, "event_id"),
@@ -130,7 +141,7 @@ def _normalize_metadata(metadata: dict[str, object], event_id: str) -> dict[str,
     normalized: dict[str, MetadataValue] = {}
     for key, value in metadata.items():
         if not isinstance(key, str):
-            raise ValueError(f"Event {event_id!r} metadata keys must be strings")
+            raise TypeError(f"Event {event_id!r} metadata keys must be strings")
         if value is not None and not isinstance(value, (str, int, float, bool)):
             raise ValueError(f"Event {event_id!r} metadata field {key!r} is not scalar")
         normalized[key] = value
@@ -154,14 +165,14 @@ def _optional_string(row: dict[str, object], field: str) -> str | None:
 def _required_datetime(row: dict[str, object], field: str) -> datetime:
     value = row[field]
     if not isinstance(value, datetime):
-        raise ValueError(f"Event field {field!r} must be a timestamp")
+        raise TypeError(f"Event field {field!r} must be a timestamp")
     return value
 
 
 def _required_integer(row: dict[str, object], field: str) -> int:
     value = row[field]
     if not isinstance(value, int):
-        raise ValueError(f"Event field {field!r} must be an integer")
+        raise TypeError(f"Event field {field!r} must be an integer")
     return value
 
 

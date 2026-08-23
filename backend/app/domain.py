@@ -71,4 +71,5 @@ class IngestionResult:
     quarantined_events: tuple[NormalizedEvent, ...]
     data_health: DataHealth
     factory_as_of: datetime
+    source_sha256: str
 

@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import polars as pl
+import pytest
+
 from app.ingest import load_events
 
 DATA_PATH = Path(__file__).parents[1] / "data" / "manufacturing_events.jsonl"
@@ -61,9 +64,50 @@ def test_conflicting_event_id_quarantines_every_copy(tmp_path: Path) -> None:
     assert result.data_health.quarantined_event_ids == ("evt-1",)
 
 
+def test_repeated_load_returns_the_same_trusted_boundary(tmp_path: Path) -> None:
+    path = write_jsonl(tmp_path, [CREATED_EVENT])
+
+    assert load_events(path) == load_events(path)
+
+
+def test_source_rows_are_stable_when_timestamps_are_not_ordered(tmp_path: Path) -> None:
+    earlier_event = {
+        **CREATED_EVENT,
+        "event_id": "evt-2",
+        "timestamp": "2025-12-31T12:00:00Z",
+    }
+
+    result = load_events(write_jsonl(tmp_path, [CREATED_EVENT, earlier_event]))
+
+    assert tuple(event.event_id for event in result.trusted_events) == ("evt-1", "evt-2")
+    assert tuple(event.ingestion_index for event in result.trusted_events) == (0, 1)
+
+
+def test_late_appearing_metadata_survives_full_schema_inference(tmp_path: Path) -> None:
+    early_events = [{**CREATED_EVENT, "event_id": f"evt-{index}"} for index in range(100)]
+    late_event = {
+        **CREATED_EVENT,
+        "event_id": "evt-late",
+        "metadata": {**CREATED_EVENT["metadata"], "inspector": "qa-7"},
+    }
+
+    result = load_events(write_jsonl(tmp_path, [*early_events, late_event]))
+
+    assert result.trusted_events[-1].metadata["inspector"] == "qa-7"
+
+
+def test_invalid_json_fails_visibly(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.jsonl"
+    path.write_text('{"event_id":', encoding="utf-8")
+
+    with pytest.raises(pl.exceptions.ComputeError):
+        load_events(path)
+
+
 def test_supplied_dataset_reproduces_trusted_ingestion_baseline() -> None:
     result = load_events(DATA_PATH)
 
+    assert result.source_sha256 == "112c635e33abb1d1af3b9ce2be200fde44d91339fce6267295b73efa5c077ab4"
     assert result.data_health.raw_rows == 19_519
     assert result.data_health.trusted_rows == 19_495
     assert result.data_health.duplicate_event_ids == 19
