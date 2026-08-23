@@ -267,3 +267,19 @@ Plan impact:
 6. **Railway readiness should reflect real data readiness, not merely process startup.**
 7. **Pydantic AI is only valuable after deterministic truth exists.**
 8. **If AI is added, deterministic tools + structured output + offline model tests are the reliable path.**
+
+# Review-gate rationale
+
+The official stack guidance supports concentrating review effort at two architectural boundaries.
+
+1. **Truth boundary:** Polars is the production NDJSON path and DuckDB is the independent audit path; the design intentionally creates one runtime source of derived truth. Review after this deterministic projection and its Pydantic/FastAPI boundary are complete.
+2. **Delivery boundary:** FastAPI lifespan/readiness, Next.js server/client separation, Railway health checks, and Vercel environment/secrets behavior create the primary late-stage integration risk. Review the exact deployed submission SHA after these boundaries are wired together.
+
+Therefore the project uses:
+
+```text
+Review 1 → trusted FactoryState + API contract
+Review 2 → exact deployed submission candidate
+```
+
+Review gates are tied to exact commit SHAs rather than PR numbers because branch heads may move.

@@ -313,3 +313,23 @@ README
 Do not rewrite reviewed/visible history unless necessary.
 
 Stop at the four-hour limit.
+
+## 13. Review budget
+
+Only two serious reviews are budgeted.
+
+### Review 1 — Factory Truth
+
+Target: after backend/API milestone, ~`T+01:35`–`T+01:50`.
+
+Purpose: catch semantic errors before every screen inherits them.
+
+### Review 2 — Exact Submission
+
+Target: feature freeze, ~`T+03:15`.
+
+Purpose: verify the exact deployed candidate across correctness, auth/secrets, integration, claims, and submission readiness.
+
+See `06_REVIEW_GATES.md` for the exact contract.
+
+Do not convert these into per-PR reviews. If PR numbering changes, preserve the semantic review boundaries.
