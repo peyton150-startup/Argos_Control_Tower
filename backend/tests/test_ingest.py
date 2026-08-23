@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from app.ingest import load_events
@@ -131,7 +130,7 @@ def test_invalid_json_fails_visibly(tmp_path: Path) -> None:
     path = tmp_path / "invalid.jsonl"
     path.write_text('{"event_id":', encoding="utf-8")
 
-    with pytest.raises(pl.exceptions.ComputeError):
+    with pytest.raises(json.JSONDecodeError):
         load_events(path)
 
 

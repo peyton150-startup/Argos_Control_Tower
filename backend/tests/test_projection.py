@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -16,18 +17,22 @@ def event(
     *,
     timestamp: datetime = TIMESTAMP,
     job_id: str | None = "job-1",
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, object] | None = None,
+    quantity: int | None = None,
+    part_id: str | None = "part-1",
+    customer_id: str | None = "customer-1",
+    material: str | None = "carbon",
 ) -> NormalizedEvent:
     return NormalizedEvent.create(
         event_id=event_id,
         timestamp=timestamp,
         event_type=event_type,
         job_id=job_id,
-        part_id="part-1",
-        customer_id="customer-1",
+        part_id=part_id,
+        customer_id=customer_id,
         machine_id=None,
-        material="carbon",
-        quantity=None,
+        material=material,
+        quantity=quantity,
         metadata=metadata or {},
         ingestion_index=ingestion_index,
     )
@@ -79,7 +84,12 @@ def test_equal_timestamps_are_resolved_by_ingestion_index() -> None:
 def test_block_then_unblock_clears_active_block_evidence() -> None:
     state = project_factory_state(
         ingestion(
-            event("created", "job_created", 0),
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-02T12:00:00Z", "target_quantity": 10},
+            ),
             event("blocked", "job_blocked", 1, metadata={"reason": "material_wait"}),
             event("unblocked", "job_unblocked", 2),
         )
@@ -95,7 +105,12 @@ def test_block_then_unblock_clears_active_block_evidence() -> None:
 def test_completion_clears_active_block_evidence() -> None:
     state = project_factory_state(
         ingestion(
-            event("created", "job_created", 0),
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-02T12:00:00Z", "target_quantity": 10},
+            ),
             event("blocked", "job_blocked", 1, metadata={"reason": "machine_fault"}),
             event("completed", "job_completed", 2),
         )
@@ -245,6 +260,263 @@ def test_factory_metadata_is_copied_unchanged() -> None:
     assert state.source_sha256 == source_sha256
 
 
+def test_open_job_is_overdue_against_factory_clock() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-01T11:59:59Z"},
+            ),
+            factory_as_of=TIMESTAMP,
+        )
+    )
+
+    assert state.jobs["job-1"].is_overdue is True
+
+
+def test_due_at_factory_clock_is_not_overdue() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-01T12:00:00Z"},
+            )
+        )
+    )
+
+    assert state.jobs["job-1"].is_overdue is False
+
+
+def test_completed_job_is_not_overdue() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-01T11:00:00Z"},
+            ),
+            event("completed", "job_completed", 1, timestamp=TIMESTAMP + timedelta(minutes=1)),
+        )
+    )
+
+    assert state.jobs["job-1"].is_overdue is False
+
+
+def test_completion_after_due_at_is_late() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-01T12:00:00Z"},
+            ),
+            event("completed", "job_completed", 1, timestamp=TIMESTAMP + timedelta(seconds=1)),
+        )
+    )
+
+    assert state.jobs["job-1"].completed_late is True
+
+
+def test_completion_at_due_at_is_not_late() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-01T12:00:00Z"},
+            ),
+            event("completed", "job_completed", 1),
+        )
+    )
+
+    assert state.jobs["job-1"].completed_late is False
+
+
+def test_creation_owns_contract_facts_and_authority_evidence() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={
+                    "priority": "high",
+                    "facility": "alpha",
+                    "target_due_at": "2026-08-02T12:00:00Z",
+                    "target_quantity": 10,
+                    "tool_id": "tool-created",
+                    "unit_price_estimate": 12.50,
+                },
+                customer_id="created-customer",
+                part_id="created-part",
+                material="created-material",
+            ),
+            event(
+                "completed",
+                "job_completed",
+                1,
+                metadata={"priority": "low", "target_quantity": 999, "good_quantity": 9, "scrap_quantity": 1},
+                quantity=10,
+                customer_id="completion-customer",
+                part_id="completion-part",
+                material="completion-material",
+            ),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.customer_id, job.part_id, job.material) == (
+        "created-customer",
+        "created-part",
+        "created-material",
+    )
+    assert (job.priority, job.facility, job.tool_id, job.target_quantity) == (
+        "high",
+        "alpha",
+        "tool-created",
+        10,
+    )
+    assert job.created_event_id == "created"
+
+
+def test_completion_owns_final_quantities_and_authority_evidence() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("created", "job_created", 0, quantity=999),
+            event("completed", "job_completed", 1, quantity=10, metadata={"good_quantity": 9, "scrap_quantity": 1}),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.completed_quantity, job.good_quantity, job.scrap_quantity) == (10, 9, 1)
+    assert job.completion_event_id == "completed"
+
+
+def test_cycle_quantities_cannot_alter_completed_totals() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("created", "job_created", 0),
+            event("cycle", "cycle_completed", 1, quantity=999),
+            event("completed", "job_completed", 2, quantity=10, metadata={"good_quantity": 9, "scrap_quantity": 1}),
+        )
+    )
+
+    assert state.overview.completed_quantity == 10
+
+
+def test_quantity_mismatch_preserves_facts_but_excludes_job_from_yield() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-02T12:00:00Z", "target_quantity": 10},
+            ),
+            event("completed", "job_completed", 1, quantity=10, metadata={"good_quantity": 8, "scrap_quantity": 1}),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.completed_quantity, job.good_quantity, job.scrap_quantity, job.yield_rate) == (10, 8, 1, None)
+    assert state.data_health.reconciliation_issues == ("job=job-1 field=completion_quantity reason=mismatch",)
+    assert state.overview.aggregate_yield is None
+
+
+def test_invalid_completion_quantities_are_not_repaired() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_due_at": "2026-08-02T12:00:00Z", "target_quantity": 10},
+            ),
+            event("completed", "job_completed", 1, quantity=10, metadata={"good_quantity": True, "scrap_quantity": 1}),
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.completed_quantity, job.good_quantity, job.scrap_quantity, job.yield_rate) == (10, None, 1, None)
+    assert state.data_health.reconciliation_issues == (
+        "job=job-1 field=good_quantity reason=invalid_integer",
+    )
+
+
+def test_missing_price_remains_none() -> None:
+    state = project_factory_state(
+        ingestion(event("created", "job_created", 0, metadata={"target_quantity": 10}))
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.unit_price_estimate, job.estimated_value) == (None, None)
+
+
+def test_float_price_uses_decimal_string_conversion() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_quantity": 3, "unit_price_estimate": 0.1},
+            )
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.unit_price_estimate, job.estimated_value) == (Decimal("0.1"), Decimal("0.3"))
+
+
+def test_integer_price_is_not_an_observed_money_type() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"target_quantity": 3, "unit_price_estimate": 12},
+            )
+        )
+    )
+
+    job = state.jobs["job-1"]
+    assert (job.unit_price_estimate, job.estimated_value) == (None, None)
+
+
+def test_aggregate_yield_is_weighted_by_completed_quantity() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("created-1", "job_created", 0, job_id="job-1"),
+            event("completed-1", "job_completed", 1, job_id="job-1", quantity=100, metadata={"good_quantity": 50, "scrap_quantity": 50}),
+            event("created-2", "job_created", 2, job_id="job-2"),
+            event("completed-2", "job_completed", 3, job_id="job-2", quantity=10, metadata={"good_quantity": 10, "scrap_quantity": 0}),
+        )
+    )
+
+    assert state.overview.aggregate_yield == Decimal(60) / Decimal(110)
+
+
+def test_all_overdue_open_jobs_are_in_pricing_coverage_denominator() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("created-priced", "job_created", 0, job_id="priced", metadata={"target_due_at": "2026-08-01T11:00:00Z", "target_quantity": 10, "unit_price_estimate": 12.5}),
+            event("created-unpriced", "job_created", 1, job_id="unpriced", metadata={"target_due_at": "2026-08-01T11:00:00Z", "target_quantity": 10}),
+        )
+    )
+
+    overview = state.overview
+    assert (overview.overdue_open_jobs, overview.priced_overdue_open_jobs, overview.overdue_open_jobs_for_pricing) == (2, 1, 2)
+    assert overview.known_priced_work_at_risk == Decimal("125.0")
+
+
 def test_supplied_dataset_lifecycle_counts() -> None:
     from app.ingest import load_events
 
@@ -267,3 +539,25 @@ def test_supplied_dataset_lifecycle_counts() -> None:
     assert sum(job.completed_at is not None for job in jobs) == 281
     assert sum(job.completed_at is None for job in jobs) == 31
     assert sum(job.is_blocked for job in jobs) == 9
+
+
+def test_supplied_dataset_projection_b_acceptance_values() -> None:
+    from app.ingest import load_events
+
+    state = project_factory_state(
+        load_events(Path(__file__).parents[1] / "data" / "manufacturing_events.jsonl")
+    )
+
+    overview = state.overview
+    assert overview.jobs_created == 312
+    assert overview.completed_jobs == 281
+    assert overview.open_jobs == 31
+    assert overview.overdue_open_jobs == 26
+    assert overview.blocked_jobs == 9
+    assert overview.late_completed_jobs == 75
+    assert overview.completed_quantity == 86_168
+    assert overview.good_quantity == 78_555
+    assert overview.scrap_quantity == 7_613
+    assert overview.aggregate_yield == Decimal(78_555) / Decimal(86_168)
+    assert overview.known_priced_work_at_risk == Decimal("590465.02")
+    assert (overview.priced_overdue_open_jobs, overview.overdue_open_jobs_for_pricing) == (10, 26)

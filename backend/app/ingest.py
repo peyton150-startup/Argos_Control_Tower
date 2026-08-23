@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import file_digest
 from pathlib import Path
-
-import polars as pl
 
 from app.domain import DataHealth, IngestionResult, MetadataValue, NormalizedEvent
 
@@ -27,24 +25,10 @@ REQUIRED_COLUMNS = {
 
 def load_events(path: Path) -> IngestionResult:
     source_sha256 = _source_sha256(path)
-    lazy_frame = pl.scan_ndjson(
-        path,
-        row_index_name="ingestion_index",
-        infer_schema_length=None,
-        ignore_errors=False,
-    )
-    missing_columns = REQUIRED_COLUMNS.difference(lazy_frame.collect_schema().names())
-    if missing_columns:
-        missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"Missing required event columns: {missing}")
-
-    frame = lazy_frame.with_columns(
-        pl.col("timestamp").str.to_datetime(strict=True, time_zone="UTC")
-    ).collect()
-    if frame.height == 0:
+    rows = tuple(_read_jsonl(path))
+    if not rows:
         raise ValueError("Event dataset is empty")
-
-    events = tuple(_normalize_row(row) for row in frame.iter_rows(named=True))
+    events = tuple(_normalize_row(row) for row in rows)
     trusted, quarantined, health = _classify_duplicates(events)
     if not trusted:
         raise ValueError("No trusted events remain for authoritative factory clock")
@@ -55,6 +39,29 @@ def load_events(path: Path) -> IngestionResult:
         factory_as_of=max(event.timestamp for event in trusted),
         source_sha256=source_sha256,
     )
+
+
+def _read_jsonl(path: Path) -> Iterable[dict[str, object]]:
+    with path.open(encoding="utf-8") as source:
+        for ingestion_index, line in enumerate(source):
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise TypeError("Event row must be an object")
+            missing_columns = REQUIRED_COLUMNS.difference(row)
+            if missing_columns:
+                missing = ", ".join(sorted(missing_columns))
+                raise ValueError(f"Missing required event columns: {missing}")
+            timestamp = row["timestamp"]
+            if not isinstance(timestamp, str):
+                raise TypeError("Event field 'timestamp' must be an ISO timestamp string")
+            parsed_timestamp = datetime.fromisoformat(timestamp)
+            if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
+                raise ValueError("Event field 'timestamp' must include a timezone")
+            yield {
+                **row,
+                "timestamp": parsed_timestamp.astimezone(UTC),
+                "ingestion_index": ingestion_index,
+            }
 
 
 def _source_sha256(path: Path) -> str:

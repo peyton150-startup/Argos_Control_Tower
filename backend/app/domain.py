@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from types import MappingProxyType
 
 MetadataValue = str | int | float | bool | None
@@ -88,6 +89,38 @@ class JobState:
     blocked_at: datetime | None
     block_event_id: str | None
     timeline_event_ids: tuple[str, ...]
+    priority: str | None
+    facility: str | None
+    tool_id: str | None
+    target_due_at: datetime | None
+    target_quantity: int | None
+    unit_price_estimate: Decimal | None
+    estimated_value: Decimal | None
+    completed_quantity: int | None
+    good_quantity: int | None
+    scrap_quantity: int | None
+    yield_rate: Decimal | None
+    is_overdue: bool
+    completed_late: bool
+    created_event_id: str
+    completion_event_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryOverview:
+    jobs_created: int
+    completed_jobs: int
+    open_jobs: int
+    overdue_open_jobs: int
+    blocked_jobs: int
+    late_completed_jobs: int
+    completed_quantity: int
+    good_quantity: int
+    scrap_quantity: int
+    aggregate_yield: Decimal | None
+    known_priced_work_at_risk: Decimal
+    priced_overdue_open_jobs: int
+    overdue_open_jobs_for_pricing: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,4 +130,5 @@ class FactoryState:
     data_health: DataHealth
     jobs: Mapping[str, JobState]
     events_by_id: Mapping[str, NormalizedEvent]
+    overview: FactoryOverview
 
