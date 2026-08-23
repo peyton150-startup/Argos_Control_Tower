@@ -1,9 +1,11 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
+import polars as pl
 import pytest
 
-from app.ingest import load_events
+from app.ingest import _normalize_row, load_events
 
 DATA_PATH = Path(__file__).parents[1] / "data" / "manufacturing_events.jsonl"
 
@@ -130,8 +132,20 @@ def test_invalid_json_fails_visibly(tmp_path: Path) -> None:
     path = tmp_path / "invalid.jsonl"
     path.write_text('{"event_id":', encoding="utf-8")
 
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(pl.exceptions.ComputeError):
         load_events(path)
+
+
+def test_boolean_event_quantity_is_rejected_during_normalization() -> None:
+    row = {
+        **CREATED_EVENT,
+        "timestamp": datetime(2026, 1, 1, 12, tzinfo=UTC),
+        "quantity": True,
+        "ingestion_index": 0,
+    }
+
+    with pytest.raises(ValueError, match="Event field 'quantity' must be an integer or null"):
+        _normalize_row(row)
 
 
 def test_supplied_dataset_reproduces_trusted_ingestion_baseline() -> None:
