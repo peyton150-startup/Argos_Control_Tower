@@ -595,3 +595,12 @@ The take-home is shippable when:
 - important metrics are independently reconciled
 - README is short and accurate
 - Git history shows meaningful milestones
+
+## 15. Review strategy
+
+The project has two serious review gates; see `06_REVIEW_GATES.md`.
+
+1. **Factory Truth review** after ingestion + deterministic `FactoryState` + focused tests + typed backend contract.
+2. **Exact Submission review** at feature freeze after end-to-end production deployment.
+
+These are semantic architecture gates, not fixed PR numbers.

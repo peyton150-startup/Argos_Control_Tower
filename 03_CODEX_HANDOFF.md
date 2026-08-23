@@ -345,3 +345,34 @@ over:
 ```text
 large unfinished manufacturing platform
 ```
+
+# Mandatory review gates
+
+Read `06_REVIEW_GATES.md`.
+
+There are exactly two planned full reviews.
+
+### Gate 1 — Factory Truth
+
+Stop and dispatch after the deterministic backend is complete:
+
+```text
+ingest
+→ trusted events
+→ FactoryState
+→ focused tests
+→ FastAPI/Pydantic contract
+→ readiness
+```
+
+Record the exact SHA.
+
+You may continue presentation-only frontend work while this review runs, but do not change projection semantics/API contracts before resolving findings.
+
+### Gate 2 — Submission Readiness
+
+At feature freeze, after production deployment and smoke testing, record the exact intended submission SHA and dispatch the final review.
+
+Do not add features afterward.
+
+The review target is always an exact SHA, never "latest branch" or a moving PR head.
