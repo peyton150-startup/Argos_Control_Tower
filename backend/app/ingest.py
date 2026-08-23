@@ -46,11 +46,13 @@ def load_events(path: Path) -> IngestionResult:
 
     events = tuple(_normalize_row(row) for row in frame.iter_rows(named=True))
     trusted, quarantined, health = _classify_duplicates(events)
+    if not trusted:
+        raise ValueError("No trusted events remain for authoritative factory clock")
     return IngestionResult(
         trusted_events=trusted,
         quarantined_events=quarantined,
         data_health=health,
-        factory_as_of=max(event.timestamp for event in events),
+        factory_as_of=max(event.timestamp for event in trusted),
         source_sha256=source_sha256,
     )
 
@@ -171,13 +173,13 @@ def _required_datetime(row: dict[str, object], field: str) -> datetime:
 
 def _required_integer(row: dict[str, object], field: str) -> int:
     value = row[field]
-    if not isinstance(value, int):
+    if type(value) is not int:
         raise TypeError(f"Event field {field!r} must be an integer")
     return value
 
 
 def _optional_integer(row: dict[str, object], field: str) -> int | None:
     value = row[field]
-    if value is not None and not isinstance(value, int):
+    if value is not None and type(value) is not int:
         raise ValueError(f"Event field {field!r} must be an integer or null")
     return value

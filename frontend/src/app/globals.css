@@ -1,26 +1,94 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f6f3;
+  --foreground: #18252b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-graphite: #18252b;
+  --color-oxidized: #315c68;
+  --color-steel: #b8c4c7;
+  --color-steel-dark: #64777d;
+  --color-steel-light: #e3e9e9;
+  --color-safety: #d8892b;
+  --color-safety-soft: #f5eadb;
+  --color-alarm: #b5463a;
+  --color-alarm-soft: #f4e8e5;
+  --color-paper: #f4f6f3;
+  --color-panel: #edf1ef;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --shadow-panel: 0 1px 0 rgb(24 37 43 / 0.08), 0 12px 28px rgb(24 37 43 / 0.05);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: #d8892b;
+  color: #18252b;
+}
+
+@layer components {
+  .eyebrow {
+    @apply font-mono text-[0.63rem] font-semibold uppercase tracking-[0.2em] text-oxidized;
+  }
+
+  .section-title {
+    @apply mt-1 text-2xl font-semibold tracking-[-0.04em] text-graphite sm:text-3xl;
+  }
+
+  .metric-card {
+    @apply min-h-40 border p-4 shadow-panel sm:min-h-44 sm:p-5;
+  }
+
+  .detail-label {
+    @apply font-mono text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-steel-dark;
+  }
+
+  .status-badge {
+    @apply inline-flex min-h-6 items-center px-2.5 py-1 font-mono text-[0.62rem] font-semibold uppercase tracking-[0.16em];
+  }
+
+  .factory-clock {
+    position: relative;
+  }
+
+  .factory-clock::before,
+  .factory-clock::after {
+    position: absolute;
+    left: -0.22rem;
+    width: 0.45rem;
+    height: 1px;
+    content: "";
+    background: #d6dee0;
+  }
+
+  .factory-clock::before {
+    top: 0.5rem;
+  }
+
+  .factory-clock::after {
+    bottom: 0.5rem;
+  }
+
+  .timeline-rail {
+    position: relative;
+  }
+
+  .timeline-rail::before {
+    position: absolute;
+    top: 1.75rem;
+    bottom: 1.75rem;
+    left: 0.64rem;
+    width: 1px;
+    content: "";
+    background: #b8c4c7;
+  }
 }

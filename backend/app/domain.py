@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from types import MappingProxyType
 
 MetadataValue = str | int | float | bool | None
@@ -72,4 +73,127 @@ class IngestionResult:
     data_health: DataHealth
     factory_as_of: datetime
     source_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class JobState:
+    job_id: str
+    customer_id: str | None
+    part_id: str | None
+    material: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    is_blocked: bool
+    block_reason: str | None
+    blocked_at: datetime | None
+    block_event_id: str | None
+    timeline_event_ids: tuple[str, ...]
+    priority: str | None
+    facility: str | None
+    tool_id: str | None
+    target_due_at: datetime | None
+    target_quantity: int | None
+    unit_price_estimate: Decimal | None
+    estimated_value: Decimal | None
+    completed_quantity: int | None
+    good_quantity: int | None
+    scrap_quantity: int | None
+    yield_rate: Decimal | None
+    is_overdue: bool
+    completed_late: bool
+    created_event_id: str
+    completion_event_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryOverview:
+    jobs_created: int
+    completed_jobs: int
+    open_jobs: int
+    overdue_open_jobs: int
+    blocked_jobs: int
+    late_completed_jobs: int
+    completed_quantity: int
+    good_quantity: int
+    scrap_quantity: int
+    aggregate_yield: Decimal | None
+    known_priced_work_at_risk: Decimal
+    priced_overdue_open_jobs: int
+    overdue_open_jobs_for_pricing: int
+
+
+@dataclass(frozen=True, slots=True)
+class QualityState:
+    inspection_passed_events: int
+    inspection_failed_events: int
+    inspection_event_pass_rate: Decimal | None
+    defect_counts: Mapping[str, int]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        inspection_passed_events: int,
+        inspection_failed_events: int,
+        inspection_event_pass_rate: Decimal | None,
+        defect_counts: Mapping[str, int],
+    ) -> QualityState:
+        return cls(
+            inspection_passed_events=inspection_passed_events,
+            inspection_failed_events=inspection_failed_events,
+            inspection_event_pass_rate=inspection_event_pass_rate,
+            defect_counts=MappingProxyType(dict(defect_counts)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionItem:
+    id: str
+    severity: str
+    category: str
+    title: str
+    entity_type: str
+    entity_id: str
+    why_it_matters: str
+    supporting_facts: Mapping[str, str]
+    evidence_event_ids: tuple[str, ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        id: str,
+        severity: str,
+        category: str,
+        title: str,
+        entity_type: str,
+        entity_id: str,
+        why_it_matters: str,
+        supporting_facts: Mapping[str, str],
+        evidence_event_ids: tuple[str, ...],
+    ) -> AttentionItem:
+        return cls(
+            id=id,
+            severity=severity,
+            category=category,
+            title=title,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            why_it_matters=why_it_matters,
+            supporting_facts=MappingProxyType(dict(supporting_facts)),
+            evidence_event_ids=tuple(evidence_event_ids),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryState:
+    factory_as_of: datetime
+    source_sha256: str
+    data_health: DataHealth
+    jobs: Mapping[str, JobState]
+    events_by_id: Mapping[str, NormalizedEvent]
+    overview: FactoryOverview
+    quality: QualityState
+    attention: tuple[AttentionItem, ...]
 
