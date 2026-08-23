@@ -20,7 +20,7 @@ export default async function JobPage({ params }: JobPageProps) {
 
   return (
     <div className="min-h-screen bg-paper">
-      <ControlTowerHeader factoryAsOf={overview.factoryAsOf} />
+      <ControlTowerHeader factoryAsOf={overview.asOf} />
       <main className="mx-auto max-w-7xl px-5 py-9 sm:px-8 sm:py-12 lg:px-10">
         <Link
           href="/"
@@ -35,7 +35,10 @@ export default async function JobPage({ params }: JobPageProps) {
         </div>
 
         <div className="mt-12">
-          <EventTimeline events={job.evidence} />
+          <EventTimeline
+            events={job.evidence}
+            highlightedEventIds={job.attentionEvidenceEventIds}
+          />
         </div>
       </main>
     </div>
