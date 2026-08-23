@@ -73,3 +73,28 @@ class IngestionResult:
     factory_as_of: datetime
     source_sha256: str
 
+
+@dataclass(frozen=True, slots=True)
+class JobState:
+    job_id: str
+    customer_id: str | None
+    part_id: str | None
+    material: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    is_blocked: bool
+    block_reason: str | None
+    blocked_at: datetime | None
+    block_event_id: str | None
+    timeline_event_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FactoryState:
+    factory_as_of: datetime
+    source_sha256: str
+    data_health: DataHealth
+    jobs: Mapping[str, JobState]
+    events_by_id: Mapping[str, NormalizedEvent]
+
