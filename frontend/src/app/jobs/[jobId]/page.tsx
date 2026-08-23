@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 
 import { ControlTowerHeader } from "@/components/control-tower-header";
 import { EventTimeline } from "@/components/event-timeline";
@@ -11,6 +12,7 @@ interface JobPageProps {
 }
 
 export default async function JobPage({ params }: JobPageProps) {
+  await connection();
   const { jobId } = await params;
   const [job, overview] = await Promise.all([getJob(jobId), getOverview()]);
 

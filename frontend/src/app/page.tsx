@@ -3,8 +3,10 @@ import { FactorySnapshot } from "@/components/factory-snapshot";
 import { NeedsAttention } from "@/components/needs-attention";
 import { QualitySummary } from "@/components/quality-summary";
 import { getAttention, getOverview, getQuality } from "@/lib/data";
+import { connection } from "next/server";
 
 export default async function Home() {
+  await connection();
   const [overview, attention, quality] = await Promise.all([
     getOverview(),
     getAttention(),
