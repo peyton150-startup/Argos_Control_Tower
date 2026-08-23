@@ -561,3 +561,214 @@ def test_supplied_dataset_projection_b_acceptance_values() -> None:
     assert overview.aggregate_yield == Decimal(78_555) / Decimal(86_168)
     assert overview.known_priced_work_at_risk == Decimal("590465.02")
     assert (overview.priced_overdue_open_jobs, overview.overdue_open_jobs_for_pricing) == (10, 26)
+
+
+def test_supplied_dataset_quality_reproduces_trusted_defect_baseline() -> None:
+    from app.ingest import load_events
+
+    state = project_factory_state(
+        load_events(Path(__file__).parents[1] / "data" / "manufacturing_events.jsonl")
+    )
+
+    assert dict(state.quality.defect_counts) == {
+        "voids": 827,
+        "delamination": 421,
+        "dimensional": 347,
+        "surface": 337,
+        "resin_rich": 244,
+        "other": 212,
+    }
+
+
+def test_quality_counts_trusted_inspection_events_and_uses_exact_event_pass_rate() -> None:
+    state = project_factory_state(
+        ingestion(
+            event("pass-1", "inspection_passed", 0, quantity=10),
+            event("pass-2", "inspection_passed", 1, quantity=1),
+            event("failed", "inspection_failed", 2, quantity=99, metadata={"defect_code": "voids"}),
+        )
+    )
+
+    assert state.quality.inspection_passed_events == 2
+    assert state.quality.inspection_failed_events == 1
+    assert state.quality.inspection_event_pass_rate == Decimal(2) / Decimal(3)
+
+
+def test_attention_order_is_deterministic_under_input_permutation() -> None:
+    future_due = "2026-08-02T12:00:00Z"
+    overdue_due = "2026-07-31T12:00:00Z"
+    events = (
+        event(
+            "created-combined",
+            "job_created",
+            0,
+            job_id="combined",
+            metadata={"priority": "low", "target_due_at": overdue_due},
+        ),
+        event("blocked-combined", "job_blocked", 1, job_id="combined"),
+        event(
+            "created-blocked-high",
+            "job_created",
+            2,
+            job_id="blocked-high",
+            metadata={"priority": "high", "target_due_at": future_due},
+        ),
+        event("blocked-high", "job_blocked", 3, job_id="blocked-high"),
+        event(
+            "created-blocked-low",
+            "job_created",
+            4,
+            job_id="blocked-low",
+            metadata={"priority": "low", "target_due_at": future_due},
+        ),
+        event("blocked-low", "job_blocked", 5, job_id="blocked-low"),
+        event(
+            "created-overdue-high",
+            "job_created",
+            6,
+            job_id="overdue-high",
+            metadata={"priority": "high", "target_due_at": overdue_due},
+        ),
+        event(
+            "created-overdue-low",
+            "job_created",
+            7,
+            job_id="overdue-low",
+            metadata={"priority": "low", "target_due_at": overdue_due},
+        ),
+    )
+
+    ordered = project_factory_state(ingestion(*events))
+    shuffled = project_factory_state(ingestion(*reversed(events)))
+
+    expected_ids = (
+        "attention:blocked_and_overdue:combined",
+        "attention:blocked:blocked-high",
+        "attention:blocked:blocked-low",
+        "attention:overdue:overdue-high",
+        "attention:overdue:overdue-low",
+    )
+    assert tuple(item.id for item in ordered.attention) == expected_ids
+    assert shuffled.attention == ordered.attention
+
+
+def test_attention_classifies_blocked_and_overdue_with_creation_and_active_block_evidence() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"priority": "normal", "target_due_at": "2026-07-31T12:00:00Z"},
+            ),
+            event("blocked", "job_blocked", 1, metadata={"reason": "material_wait"}),
+        )
+    )
+
+    item = state.attention[0]
+    assert (item.category, item.entity_type, item.entity_id) == (
+        "BLOCKED_AND_OVERDUE",
+        "job",
+        "job-1",
+    )
+    assert item.evidence_event_ids == ("created", "blocked")
+
+
+def test_attention_classifies_simple_blocked_job() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"priority": "normal", "target_due_at": "2026-08-02T12:00:00Z"},
+            ),
+            event("blocked", "job_blocked", 1, metadata={"reason": "missing_tool"}),
+        )
+    )
+
+    assert tuple(item.category for item in state.attention) == ("BLOCKED",)
+
+
+def test_attention_classifies_simple_overdue_job() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created",
+                "job_created",
+                0,
+                metadata={"priority": "normal", "target_due_at": "2026-07-31T12:00:00Z"},
+            )
+        )
+    )
+
+    assert tuple(item.category for item in state.attention) == ("OVERDUE",)
+
+
+def test_attention_evidence_ids_resolve_from_factory_events() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "created-blocked",
+                "job_created",
+                0,
+                job_id="blocked",
+                metadata={"target_due_at": "2026-08-02T12:00:00Z"},
+            ),
+            event("blocked", "job_blocked", 1, job_id="blocked"),
+            event(
+                "created-overdue",
+                "job_created",
+                2,
+                job_id="overdue",
+                metadata={"target_due_at": "2026-07-31T12:00:00Z"},
+            ),
+        )
+    )
+
+    assert all(
+        evidence_id in state.events_by_id
+        for item in state.attention
+        for evidence_id in item.evidence_event_ids
+    )
+
+
+def test_quarantined_inspection_records_cannot_change_quality_totals() -> None:
+    trusted = event("trusted-pass", "inspection_passed", 0, quantity=1)
+    quarantined = event(
+        "quarantined-failure",
+        "inspection_failed",
+        1,
+        quantity=100,
+        metadata={"defect_code": "voids"},
+    )
+    source = ingestion(trusted)
+    state = project_factory_state(
+        IngestionResult(
+            trusted_events=source.trusted_events,
+            quarantined_events=(quarantined,),
+            data_health=source.data_health,
+            factory_as_of=source.factory_as_of,
+            source_sha256=source.source_sha256,
+        )
+    )
+
+    assert (state.quality.inspection_passed_events, state.quality.inspection_failed_events) == (1, 0)
+    assert dict(state.quality.defect_counts) == {}
+
+
+def test_resin_rich_remains_a_defect_category_only() -> None:
+    state = project_factory_state(
+        ingestion(
+            event(
+                "resin-rich-failure",
+                "inspection_failed",
+                0,
+                quantity=1,
+                metadata={"defect_code": "resin_rich"},
+            )
+        )
+    )
+
+    assert dict(state.quality.defect_counts) == {"resin_rich": 1}
+    assert not hasattr(state.quality, "resin_percentage")

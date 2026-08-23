@@ -6,7 +6,22 @@ from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
 
-from app.domain import FactoryOverview, FactoryState, IngestionResult, JobState, NormalizedEvent
+from app.domain import (
+    AttentionItem,
+    FactoryOverview,
+    FactoryState,
+    IngestionResult,
+    JobState,
+    NormalizedEvent,
+    QualityState,
+)
+
+_ATTENTION_CATEGORY_RANK = {
+    "BLOCKED_AND_OVERDUE": 0,
+    "BLOCKED": 1,
+    "OVERDUE": 2,
+}
+_PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
 
 
 @dataclass(slots=True)
@@ -92,6 +107,8 @@ def project_factory_state(ingestion: IngestionResult) -> FactoryState:
         jobs=MappingProxyType(projected_jobs),
         events_by_id=MappingProxyType({event.event_id: event for event in events}),
         overview=_build_overview(tuple(projected_jobs.values())),
+        quality=_build_quality(events),
+        attention=_build_attention(tuple(projected_jobs.values())),
     )
 
 
@@ -257,6 +274,88 @@ def _build_overview(jobs: tuple[JobState, ...]) -> FactoryOverview:
         ),
         priced_overdue_open_jobs=len(priced_overdue_open_jobs),
         overdue_open_jobs_for_pricing=len(overdue_open_jobs),
+    )
+
+
+def _build_quality(events: tuple[NormalizedEvent, ...]) -> QualityState:
+    passed_events = tuple(event for event in events if event.event_type == "inspection_passed")
+    failed_events = tuple(event for event in events if event.event_type == "inspection_failed")
+    defect_counts: dict[str, int] = {}
+    for event in failed_events:
+        defect_code = event.metadata.get("defect_code")
+        if isinstance(defect_code, str):
+            defect_counts[defect_code] = defect_counts.get(defect_code, 0) + 1
+    total_events = len(passed_events) + len(failed_events)
+    return QualityState.create(
+        inspection_passed_events=len(passed_events),
+        inspection_failed_events=len(failed_events),
+        inspection_event_pass_rate=(
+            Decimal(len(passed_events)) / Decimal(total_events) if total_events > 0 else None
+        ),
+        defect_counts=dict(sorted(defect_counts.items())),
+    )
+
+
+def _build_attention(jobs: tuple[JobState, ...]) -> tuple[AttentionItem, ...]:
+    items = tuple(item for job in jobs if (item := _attention_for_job(job)) is not None)
+    return tuple(sorted(items, key=_attention_sort_key))
+
+
+def _attention_for_job(job: JobState) -> AttentionItem | None:
+    if job.is_blocked and job.is_overdue:
+        category = "BLOCKED_AND_OVERDUE"
+        title = "Blocked and overdue job"
+        why_it_matters = "The job has an active block and its target due time has passed."
+    elif job.is_blocked:
+        category = "BLOCKED"
+        title = "Blocked job"
+        why_it_matters = "The job has an active block."
+    elif job.is_overdue:
+        category = "OVERDUE"
+        title = "Overdue job"
+        why_it_matters = "The job's target due time has passed."
+    else:
+        return None
+
+    supporting_facts: dict[str, str] = {}
+    if job.target_due_at is not None:
+        supporting_facts["target_due_at"] = job.target_due_at.isoformat()
+    if job.is_blocked:
+        supporting_facts["block_status"] = "active"
+        if job.block_reason is not None:
+            supporting_facts["block_reason"] = job.block_reason
+    if job.priority is not None:
+        supporting_facts["priority"] = job.priority
+    if job.estimated_value is not None:
+        supporting_facts["estimated_value"] = str(job.estimated_value)
+
+    evidence_event_ids = (job.created_event_id,)
+    if job.is_blocked and job.block_event_id is not None:
+        evidence_event_ids += (job.block_event_id,)
+    return AttentionItem.create(
+        id=f"attention:{category.lower()}:{job.job_id}",
+        severity="high",
+        category=category,
+        title=title,
+        entity_type="job",
+        entity_id=job.job_id,
+        why_it_matters=why_it_matters,
+        supporting_facts=supporting_facts,
+        evidence_event_ids=evidence_event_ids,
+    )
+
+
+def _attention_sort_key(item: AttentionItem) -> tuple[object, ...]:
+    due_at = item.supporting_facts.get("target_due_at")
+    estimated_value = item.supporting_facts.get("estimated_value")
+    return (
+        _ATTENTION_CATEGORY_RANK[item.category],
+        _PRIORITY_RANK.get(item.supporting_facts.get("priority"), len(_PRIORITY_RANK)),
+        due_at is None,
+        due_at or "",
+        estimated_value is None,
+        -Decimal(estimated_value) if estimated_value is not None else Decimal(0),
+        item.entity_id,
     )
 
 

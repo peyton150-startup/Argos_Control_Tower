@@ -124,6 +124,69 @@ class FactoryOverview:
 
 
 @dataclass(frozen=True, slots=True)
+class QualityState:
+    inspection_passed_events: int
+    inspection_failed_events: int
+    inspection_event_pass_rate: Decimal | None
+    defect_counts: Mapping[str, int]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        inspection_passed_events: int,
+        inspection_failed_events: int,
+        inspection_event_pass_rate: Decimal | None,
+        defect_counts: Mapping[str, int],
+    ) -> QualityState:
+        return cls(
+            inspection_passed_events=inspection_passed_events,
+            inspection_failed_events=inspection_failed_events,
+            inspection_event_pass_rate=inspection_event_pass_rate,
+            defect_counts=MappingProxyType(dict(defect_counts)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionItem:
+    id: str
+    severity: str
+    category: str
+    title: str
+    entity_type: str
+    entity_id: str
+    why_it_matters: str
+    supporting_facts: Mapping[str, str]
+    evidence_event_ids: tuple[str, ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        id: str,
+        severity: str,
+        category: str,
+        title: str,
+        entity_type: str,
+        entity_id: str,
+        why_it_matters: str,
+        supporting_facts: Mapping[str, str],
+        evidence_event_ids: tuple[str, ...],
+    ) -> AttentionItem:
+        return cls(
+            id=id,
+            severity=severity,
+            category=category,
+            title=title,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            why_it_matters=why_it_matters,
+            supporting_facts=MappingProxyType(dict(supporting_facts)),
+            evidence_event_ids=tuple(evidence_event_ids),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FactoryState:
     factory_as_of: datetime
     source_sha256: str
@@ -131,4 +194,6 @@ class FactoryState:
     jobs: Mapping[str, JobState]
     events_by_id: Mapping[str, NormalizedEvent]
     overview: FactoryOverview
+    quality: QualityState
+    attention: tuple[AttentionItem, ...]
 
