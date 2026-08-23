@@ -556,3 +556,43 @@ Never cut:
 4. production deployment
 5. Basic Auth
 6. short README
+
+# Review checkpoints
+
+The project gets two serious code reviews total. See `06_REVIEW_GATES.md`.
+
+## Review Gate 1 — Factory Truth
+
+Dispatch immediately after the FastAPI/backend milestone is complete and green, normally around `T+01:35`–`T+01:50`.
+
+Freeze the exact SHA containing:
+
+```text
+ingest
++ duplicate policy
++ FactoryState
++ projection tests
++ Pydantic/FastAPI contracts
++ readiness
+```
+
+This review protects the semantic truth layer. While it runs, frontend shell/styling may continue against the frozen API contract, but do not change projection semantics until findings are resolved.
+
+## Review Gate 2 — Exact Submission Readiness
+
+Dispatch at feature freeze, approximately `T+03:15`, only after the intended submission is deployed end-to-end.
+
+Freeze the exact submission-candidate SHA and review:
+
+```text
+correctness
++ UI claims
++ evidence traceability
++ Basic Auth
++ server/backend secret boundary
++ deployment/env configuration
++ smoke-test behavior
++ README accuracy
+```
+
+No new features after dispatch. Any later code change invalidates exact-SHA coverage and requires focused verification of the changed surface.
